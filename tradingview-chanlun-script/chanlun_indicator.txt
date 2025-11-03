@@ -1,0 +1,224 @@
+//@version=5
+indicator("缠论买卖点指标", overlay=true)
+
+// 输入参数
+lookback = input.int(100, "观察周期", minval=50)
+min_leg_length = input.int(3, "最小笔长度", minval=2)
+show_fractals = input.bool(true, "显示分型")
+show_bi = input.bool(true, "显示笔")
+show_segments = input.bool(true, "显示线段")
+show_buy_sell = input.bool(true, "显示买卖点")
+
+// 寻找顶分型和底分型
+f_top = ta.highest(high, 5) == high[2] and high[2] > high[0] and high[2] > high[4]
+f_bottom = ta.lowest(low, 5) == low[2] and low[2] < low[0] and low[2] < low[4]
+
+// 存储分型
+var fractal_top_array = array.new<float>()
+var fractal_bottom_array = array.new<float>()
+var fractal_top_index = array.new<int>()
+var fractal_bottom_index = array.new<int>()
+
+if f_top
+    array.push(fractal_top_array, high[2])
+    array.push(fractal_top_index, bar_index[2])
+    
+if f_bottom
+    array.push(fractal_bottom_array, low[2])
+    array.push(fractal_bottom_index, bar_index[2])
+
+// 清理旧数据
+if array.size(fractal_top_index) > 0 and bar_index - array.get(fractal_top_index, 0) > lookback
+    array.shift(fractal_top_array)
+    array.shift(fractal_top_index)
+    
+if array.size(fractal_bottom_index) > 0 and bar_index - array.get(fractal_bottom_index, 0) > lookback
+    array.shift(fractal_bottom_array)
+    array.shift(fractal_bottom_index)
+
+// 绘制分型
+if show_fractals
+    plotshape(f_top and show_fractals, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, offset=-2)
+    plotshape(f_bottom and show_fractals, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, offset=-2)
+
+// 笔识别函数
+identify_bi_conditions() =>
+    var bi_top_array = array.new<float>()
+    var bi_bottom_array = array.new<float>()
+    var bi_top_index = array.new<int>()
+    var bi_bottom_index = array.new<int>()
+    
+    // 简化版的笔识别逻辑
+    for i = 0 to array.size(fractal_top_index) - 1
+        if i == 0
+            array.push(bi_top_array, array.get(fractal_top_array, i))
+            array.push(bi_top_index, array.get(fractal_top_index, i))
+        else
+            prev_price = array.get(bi_top_array, array.size(bi_top_array) - 1)
+            curr_price = array.get(fractal_top_array, i)
+            if curr_price > prev_price * 1.001 or curr_price < prev_price * 0.999
+                array.push(bi_top_array, curr_price)
+                array.push(bi_top_index, array.get(fractal_top_index, i))
+    
+    for i = 0 to array.size(fractal_bottom_index) - 1
+        if i == 0
+            array.push(bi_bottom_array, array.get(fractal_bottom_array, i))
+            array.push(bi_bottom_index, array.get(fractal_bottom_index, i))
+        else
+            prev_price = array.get(bi_bottom_array, array.size(bi_bottom_array) - 1)
+            curr_price = array.get(fractal_bottom_array, i)
+            if curr_price > prev_price * 1.001 or curr_price < prev_price * 0.999
+                array.push(bi_bottom_array, curr_price)
+                array.push(bi_bottom_index, array.get(fractal_bottom_index, i))
+    
+    [bi_top_array, bi_bottom_array, bi_top_index, bi_bottom_index]
+
+[bi_top, bi_bottom, bi_top_idx, bi_bottom_idx] = identify_bi_conditions()
+
+// 绘制笔
+if show_bi and array.size(bi_top_idx) >= 2
+    for i = 0 to array.size(bi_top_idx) - 2
+        x1 = array.get(bi_top_idx, i)
+        y1 = array.get(bi_top, i)
+        x2 = array.get(bi_top_idx, i + 1)
+        y2 = array.get(bi_top, i + 1)
+        line.new(x1, y1, x2, y2, color=color.red, width=2)
+
+if show_bi and array.size(bi_bottom_idx) >= 2
+    for i = 0 to array.size(bi_bottom_idx) - 2
+        x1 = array.get(bi_bottom_idx, i)
+        y1 = array.get(bi_bottom, i)
+        x2 = array.get(bi_bottom_idx, i + 1)
+        y2 = array.get(bi_bottom, i + 1)
+        line.new(x1, y1, x2, y2, color=color.green, width=2)
+
+// 中枢识别
+identify_zhongshu() =>
+    var zs_array = array.new<string>()
+    var zs_start_array = array.new<int>()
+    var zs_end_array = array.new<int>()
+    var zs_high_array = array.new<float>()
+    var zs_low_array = array.new<float>()
+    
+    if array.size(bi_top_idx) >= 4 and array.size(bi_bottom_idx) >= 4
+        for i = 0 to array.size(bi_top_idx) - 4
+            // 简化的中枢识别：连续三个笔有重叠部分
+            top1 = array.get(bi_top, i)
+            bottom1 = array.get(bi_bottom, i)
+            top2 = array.get(bi_top, i + 1)
+            bottom2 = array.get(bi_bottom, i + 1)
+            top3 = array.get(bi_top, i + 2)
+            bottom3 = array.get(bi_bottom, i + 2)
+            
+            overlap_high = math.min(math.min(top1, top2), top3)
+            overlap_low = math.max(math.max(bottom1, bottom2), bottom3)
+            
+            if overlap_high > overlap_low
+                array.push(zs_array, "ZS")
+                array.push(zs_start_array, array.get(bi_top_idx, i))
+                array.push(zs_end_array, array.get(bi_top_idx, i + 2))
+                array.push(zs_high_array, overlap_high)
+                array.push(zs_low_array, overlap_low)
+    
+    [zs_array, zs_start_array, zs_end_array, zs_high_array, zs_low_array]
+
+[zs_arr, zs_start, zs_end, zs_high, zs_low] = identify_zhongshu()
+
+// 绘制中枢
+if show_segments and array.size(zs_arr) > 0
+    for i = 0 to array.size(zs_arr) - 1
+        start_idx = array.get(zs_start, i)
+        end_idx = array.get(zs_end, i)
+        box_height = array.get(zs_high, i) - array.get(zs_low, i)
+        box.new(start_idx, array.get(zs_high, i), end_idx, array.get(zs_low, i), 
+               border_color=color.orange, bgcolor=color.new(color.orange, 90))
+
+// 买卖点识别
+identify_buy_sell_points() =>
+    var buy_signals = array.new<bool>()
+    var sell_signals = array.new<bool>()
+    var buy_prices = array.new<float>()
+    var sell_prices = array.new<float>()
+    var buy_indexes = array.new<int>()
+    var sell_indexes = array.new<int>()
+    
+    // 第一类买点：趋势背驰后的买点（简化版）
+    if array.size(bi_bottom) >= 2
+        last_bottom = array.get(bi_bottom, array.size(bi_bottom) - 1)
+        prev_bottom = array.get(bi_bottom, array.size(bi_bottom) - 2)
+        
+        // MACD背驰检测
+        [macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+        macd_divergence = ta.valuewhen(f_bottom, macdLine, 1) > macdLine and last_bottom < prev_bottom
+        
+        if last_bottom > prev_bottom or macd_divergence
+            array.push(buy_signals, true)
+            array.push(buy_prices, last_bottom)
+            array.push(buy_indexes, array.get(bi_bottom_idx, array.size(bi_bottom_idx) - 1))
+    
+    // 第一类卖点：趋势背驰后的卖点（简化版）
+    if array.size(bi_top) >= 2
+        last_top = array.get(bi_top, array.size(bi_top) - 1)
+        prev_top = array.get(bi_top, array.size(bi_top) - 2)
+        
+        // MACD背驰检测
+        [macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+        macd_divergence = ta.valuewhen(f_top, macdLine, 1) < macdLine and last_top > prev_top
+        
+        if last_top < prev_top or macd_divergence
+            array.push(sell_signals, true)
+            array.push(sell_prices, last_top)
+            array.push(sell_indexes, array.get(bi_top_idx, array.size(bi_top_idx) - 1))
+    
+    [buy_signals, sell_signals, buy_prices, sell_prices, buy_indexes, sell_indexes]
+
+[buy_sig, sell_sig, buy_prc, sell_prc, buy_idx, sell_idx] = identify_buy_sell_points()
+
+// 绘制买卖点
+if show_buy_sell
+    plotshape(array.size(buy_idx) > 0 ? bar_index == array.get(buy_idx, array.size(buy_idx) - 1) : na, 
+             style=shape.labelup, location=location.belowbar, color=color.lime, 
+             text="买点", textcolor=color.white, size=size.normal)
+    
+    plotshape(array.size(sell_idx) > 0 ? bar_index == array.get(sell_idx, array.size(sell_idx) - 1) : na, 
+             style=shape.labeldown, location=location.abovebar, color=color.red, 
+             text="卖点", textcolor=color.white, size=size.normal)
+
+// 第二、三类买卖点识别（基于中枢）
+identify_advanced_points() =>
+    var second_buy = array.new<bool>()
+    var second_sell = array.new<bool>()
+    var third_buy = array.new<bool>()
+    var third_sell = array.new<bool>()
+    
+    if array.size(zs_arr) > 0 and array.size(bi_bottom_idx) > 0
+        latest_zs_high = array.get(zs_high, array.size(zs_high) - 1)
+        latest_zs_low = array.get(zs_low, array.size(zs_low) - 1)
+        latest_bottom = array.get(bi_bottom, array.size(bi_bottom) - 1)
+        latest_top = array.get(bi_top, array.size(bi_top) - 1)
+        
+        // 第二类买点：在中枢下方形成的新低但不破前低
+        if latest_bottom < latest_zs_low and latest_bottom > array.get(bi_bottom, array.size(bi_bottom) - 2)
+            array.push(second_buy, true)
+        
+        // 第三类买点：突破中枢后的回踩不破中枢上沿
+        if latest_bottom > latest_zs_high and latest_bottom < array.get(bi_top, array.size(bi_top) - 1)
+            array.push(third_buy, true)
+    
+    [second_buy, second_sell, third_buy, third_sell]
+
+[sec_buy, sec_sell, thr_buy, thr_sell] = identify_advanced_points()
+
+// 提示信息
+var table info_table = table.new(position.top_right, 1, 1, bgcolor=color.white, border_width=1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "缠论指标已加载\n红三角:顶分型\n绿三角:底分型\n红/绿线:笔\n橙色框:中枢\n标签:买卖点", 
+              text_color=color.black, text_size=size.small)
+
+// 警报条件
+alertcondition(f_top, "顶分型形成", "顶分型出现，注意可能的转折")
+alertcondition(f_bottom, "底分型形成", "底分型出现，注意可能的转折")
+alertcondition(array.size(buy_idx) > 0 and bar_index == array.get(buy_idx, array.size(buy_idx) - 1), 
+              "第一类买点", "第一类买点出现")
+alertcondition(array.size(sell_idx) > 0 and bar_index == array.get(sell_idx, array.size(sell_idx) - 1), 
+              "第一类卖点", "第一类卖点出现")
